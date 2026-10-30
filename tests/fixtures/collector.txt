@@ -1,0 +1,17 @@
+hostname=fixture
+kernel=6.8.0
+uptime_seconds=1000
+cpu_count=4
+cpu_total=1000
+cpu_idle=800
+load1=0.42
+load5=0.31
+load15=0.27
+memory_total_kb=8000000
+memory_available_kb=3200000
+swap_total_kb=2000000
+swap_free_kb=1800000
+disk=1000000	390000	61	/
+processes=183
+failed_units=0
+collector_complete=1

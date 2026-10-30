@@ -1,0 +1,22 @@
+[Unit]
+Description=Agentless SSH host monitoring
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Change User to the account whose ~/.ssh/config and known_hosts you use.
+User=host-watch
+StateDirectory=host-watch
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/bin/host-watch daemon
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

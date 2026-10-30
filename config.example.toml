@@ -1,0 +1,21 @@
+poll_interval_seconds = 60
+history_days = 30
+ssh_timeout_seconds = 10
+max_parallel_hosts = 4
+data_dir = "/var/lib/host-watch"
+
+[thresholds]
+cpu_warning = 90
+memory_warning = 90
+memory_critical = 98
+disk_warning = 85
+disk_critical = 95
+load_warning_per_cpu = 1.5
+
+[[hosts]]
+name = "msk1"
+
+[[hosts]]
+name = "backup"
+# ssh_host = "backup-alias"
+# enabled = false
