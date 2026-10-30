@@ -94,6 +94,16 @@ pub fn evaluate(s: &mut HostState, t: &Thresholds, now: i64, interval: u64) {
     if m.memory_percent.is_some_and(|v| v > t.memory_critical) {
         s.health = Health::Critical;
     }
+    if let Some(temp) = m.cpu_temperature_c
+        && temp > t.temperature_warning
+    {
+        if temp > t.temperature_critical {
+            s.health = Health::Critical;
+        } else if s.health != Health::Critical {
+            s.health = Health::Warning;
+        }
+        s.reasons.push(format!("CPU temperature={temp:.1} C"));
+    }
     if s.health == Health::Ok
         && (m.cpu_percent.is_none()
             || m.memory_percent.is_none()

@@ -6,6 +6,8 @@ data_dir = "/var/lib/host-watch"
 
 [thresholds]
 cpu_warning = 90
+temperature_warning = 80
+temperature_critical = 90
 memory_warning = 90
 memory_critical = 98
 disk_warning = 85

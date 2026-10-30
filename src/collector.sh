@@ -11,4 +11,9 @@ awk 'BEGIN {n=0} {n++} END {print "processes=" n}' /proc/[0-9]*/stat 2>/dev/null
 if command -v systemctl >/dev/null 2>&1; then
     units=$(systemctl --failed --no-legend --plain --no-pager 2>/dev/null) && printf '%s\n' "$units" | awk 'NF {n++} END {print "failed_units=" n+0}'
 fi
+# Raw records are parsed locally; no extra SSH session is needed.
+awk 'NR>2 {print "net=" $0}' /proc/net/dev 2>/dev/null
+if command -v sensors >/dev/null 2>&1; then
+    sensors -u 2>/dev/null | awk '{print "sensor=" $0}'
+fi
 printf 'collector_complete=1\n'

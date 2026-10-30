@@ -9,7 +9,8 @@ mod state;
 mod storage;
 #[cfg(test)]
 mod tests;
-use anyhow::{Context, Result, bail};
+mod tui;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use config::Config;
 use fs2::FileExt;
@@ -64,6 +65,7 @@ async fn cycle(c: &Config, s: &mut state::State, db: &mut storage::Storage) -> R
         match result {
             Ok((mut m, latency)) => {
                 m.derive_cpu(host.metrics.as_ref());
+                m.derive_network(host.metrics.as_ref());
                 host.previous_success = host.last_success;
                 host.last_success = Some(timestamp);
                 host.metrics = Some(m);
@@ -172,9 +174,7 @@ async fn main() -> Result<()> {
     let c = Config::read(&cli.config)?;
     match cli.command {
         Commands::Status { verbose } => return display(&c, verbose),
-        Commands::Tui => {
-            bail!("TUI and history graphs are planned for MVP 2; use status --verbose")
-        }
+        Commands::Tui => return tui::run(&c),
         _ => {}
     }
     std::fs::create_dir_all(&c.data_dir)?;

@@ -1,0 +1,12 @@
+coretemp-isa-0000
+Adapter: ISA adapter
+Package id 0:
+  temp1_input: 53.000
+  temp1_max: 100.000
+Core 0:
+  temp2_input: 49.000
+
+acpitz-acpi-0
+Adapter: ACPI interface
+temp1:
+  temp1_input: 100.000

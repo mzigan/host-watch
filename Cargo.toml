@@ -7,6 +7,8 @@ edition = "2024"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 fs2 = "0.4"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = "0.28"
 signal-hook = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
