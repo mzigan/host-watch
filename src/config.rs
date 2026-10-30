@@ -49,6 +49,8 @@ impl Host {
 #[serde(default, deny_unknown_fields)]
 pub struct Thresholds {
     pub cpu_warning: f64,
+    pub temperature_warning: f64,
+    pub temperature_critical: f64,
     pub memory_warning: f64,
     pub memory_critical: f64,
     pub disk_warning: f64,
@@ -59,6 +61,8 @@ impl Default for Thresholds {
     fn default() -> Self {
         Self {
             cpu_warning: 90.,
+            temperature_warning: 80.,
+            temperature_critical: 90.,
             memory_warning: 90.,
             memory_critical: 98.,
             disk_warning: 85.,
@@ -105,6 +109,14 @@ impl Config {
                 && t.load_warning_per_cpu.is_finite()
                 && t.load_warning_per_cpu > 0.,
             "invalid threshold ordering/load threshold"
+        );
+        ensure!(
+            t.temperature_warning.is_finite()
+                && t.temperature_critical.is_finite()
+                && (-20.0..=150.0).contains(&t.temperature_warning)
+                && (-20.0..=150.0).contains(&t.temperature_critical)
+                && t.temperature_warning < t.temperature_critical,
+            "invalid temperature thresholds"
         );
         let mut names = HashSet::new();
         for h in &self.hosts {

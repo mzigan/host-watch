@@ -20,6 +20,11 @@ pub struct Metrics {
     pub processes: Option<u64>,
     pub failed_units: Option<u64>,
     pub disks: Vec<Disk>,
+    pub rx_bytes: Option<u64>,
+    pub tx_bytes: Option<u64>,
+    pub rx_bytes_per_sec: Option<f64>,
+    pub tx_bytes_per_sec: Option<f64>,
+    pub cpu_temperature_c: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Disk {
@@ -31,6 +36,8 @@ pub struct Disk {
 pub fn parse(output: &str) -> Result<Metrics> {
     let mut m = Metrics::default();
     let mut complete = false;
+    let mut net = String::new();
+    let mut sensors = String::new();
     for line in output.lines() {
         let Some((k, v)) = line.split_once('=') else {
             bail!("invalid collector line")
@@ -52,6 +59,14 @@ pub fn parse(output: &str) -> Result<Metrics> {
             "processes" => m.processes = Some(v.parse()?),
             "failed_units" => m.failed_units = Some(v.parse()?),
             "collector_complete" => complete = v == "1",
+            "net" => {
+                net.push_str(v);
+                net.push('\n');
+            }
+            "sensor" => {
+                sensors.push_str(v);
+                sensors.push('\n');
+            }
             "disk" => {
                 let p: Vec<_> = v.splitn(4, '\t').collect();
                 ensure!(p.len() == 4, "invalid disk record");
@@ -81,6 +96,12 @@ pub fn parse(output: &str) -> Result<Metrics> {
         ensure!(total > 0 && avail <= total, "invalid memory counters");
         m.memory_percent = Some(100. * (total - avail) as f64 / total as f64);
     }
+    if !net.is_empty() {
+        let (rx, tx) = parse_net_dev(&net)?;
+        m.rx_bytes = Some(rx);
+        m.tx_bytes = Some(tx);
+    }
+    m.cpu_temperature_c = parse_temperature(&sensors);
     Ok(m)
 }
 impl Metrics {
@@ -98,5 +119,93 @@ impl Metrics {
                 self.cpu_percent = Some(100. * (dt - di) as f64 / dt as f64);
             }
         }
+    }
+}
+
+/// Aggregate all non-loopback interfaces. Headers are accepted for fixtures.
+pub fn parse_net_dev(raw: &str) -> Result<(u64, u64)> {
+    let (mut rx, mut tx) = (0_u64, 0_u64);
+    let mut records = 0;
+    for line in raw.lines() {
+        let Some((interface, values)) = line.split_once(':') else {
+            continue;
+        };
+        let fields: Vec<_> = values.split_whitespace().collect();
+        ensure!(fields.len() == 16, "invalid /proc/net/dev record");
+        records += 1;
+        if interface.trim() == "lo" {
+            continue;
+        }
+        rx = rx
+            .checked_add(fields[0].parse()?)
+            .ok_or_else(|| anyhow::anyhow!("RX counter overflow"))?;
+        tx = tx
+            .checked_add(fields[8].parse()?)
+            .ok_or_else(|| anyhow::anyhow!("TX counter overflow"))?;
+    }
+    ensure!(records > 0, "no /proc/net/dev records");
+    Ok((rx, tx))
+}
+
+/// Only standard CPU labels from `sensors -u`; never guess from generic temp1.
+pub fn parse_temperature(raw: &str) -> Option<f64> {
+    let mut groups: [Vec<f64>; 3] = Default::default();
+    let mut group = None;
+    for line in raw.lines() {
+        let value = line.trim();
+        if !line.starts_with(char::is_whitespace) {
+            group = if value.starts_with("Package id ") && value.ends_with(':') {
+                Some(0)
+            } else if value == "Tdie:" {
+                Some(1)
+            } else if value == "Tctl:" {
+                Some(2)
+            } else {
+                None
+            };
+        }
+        if let Some(g) = group
+            && let Some((key, value)) = value.split_once(':')
+            && key.starts_with("temp")
+            && key.ends_with("_input")
+            && let Ok(temp) = value.trim().parse::<f64>()
+            && temp.is_finite()
+            && (-20.0..=150.0).contains(&temp)
+        {
+            groups[g].push(temp);
+        }
+    }
+    // Multiple CPU packages are represented by their maximum temperature.
+    groups
+        .iter()
+        .find_map(|g| g.iter().copied().reduce(f64::max))
+}
+
+impl Metrics {
+    pub fn derive_network(&mut self, previous: Option<&Self>) {
+        self.rx_bytes_per_sec = None;
+        self.tx_bytes_per_sec = None;
+        let Some(p) = previous else { return };
+        let Some(elapsed) = self
+            .uptime_seconds
+            .zip(p.uptime_seconds)
+            .map(|(a, b)| a - b)
+            .filter(|v| *v > 0.)
+        else {
+            return;
+        };
+        self.rx_bytes_per_sec = self
+            .rx_bytes
+            .zip(p.rx_bytes)
+            .and_then(|(a, b)| a.checked_sub(b))
+            .map(|delta| delta as f64 / elapsed);
+        self.tx_bytes_per_sec = self
+            .tx_bytes
+            .zip(p.tx_bytes)
+            .and_then(|(a, b)| a.checked_sub(b))
+            .map(|delta| delta as f64 / elapsed);
+    }
+    pub fn max_disk_used_percent(&self) -> Option<f64> {
+        self.disks.iter().map(|d| d.used_percent).reduce(f64::max)
     }
 }
