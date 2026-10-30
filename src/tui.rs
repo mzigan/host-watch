@@ -296,6 +296,36 @@ pub fn render(f: &mut Frame, app: &mut App, c: &Config, now: i64) {
             Constraint::Length(2),
         ])
         .split(area);
+    let sidebar = area.width >= 150 && area.height >= 30;
+    let (table_area, details_area, graphs_area) = if sidebar {
+        let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length((area.width / 3).clamp(46, 76)),
+                Constraint::Min(1),
+            ])
+            .split(body);
+        let right = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length((columns[1].width / 3).clamp(32, 52)),
+                Constraint::Min(1),
+            ])
+            .split(columns[1]);
+        (columns[0], Some(right[0]), Some(right[1]))
+    } else if area.width >= 110 && area.height >= 24 {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+            .split(rows[1]);
+        (rows[0], Some(columns[0]), Some(columns[1]))
+    } else if app.focus == 1 {
+        (rows[0], Some(rows[1]), None)
+    } else {
+        (rows[0], None, Some(rows[1]))
+    };
+    let compact = sidebar && table_area.width < 72;
     let data = app
         .names
         .iter()
@@ -308,7 +338,7 @@ pub fn render(f: &mut Frame, app: &mut App, c: &Config, now: i64) {
             } else {
                 h.health
             };
-            Row::new(vec![
+            let mut cells = vec![
                 Cell::from(name.clone()),
                 Cell::from(format!("{health}{}", if old { "/STALE" } else { "" })).style(
                     Style::default().fg(if old {
@@ -325,7 +355,11 @@ pub fn render(f: &mut Frame, app: &mut App, c: &Config, now: i64) {
                     h.latency_ms
                         .map_or_else(|| "-".into(), |v| format!("{v}ms")),
                 ),
-            ])
+            ];
+            if compact {
+                cells.truncate(4);
+            }
+            Row::new(cells)
         })
         .collect::<Vec<_>>();
     let widths = [
@@ -337,9 +371,11 @@ pub fn render(f: &mut Frame, app: &mut App, c: &Config, now: i64) {
         Constraint::Length(7),
         Constraint::Length(9),
     ];
-    let table = Table::new(data, widths)
+    let column_count = if compact { 4 } else { 7 };
+    let headers = ["HOST", "STATE", "CPU", "RAM", "DISK", "LOAD", "SSH"];
+    let table = Table::new(data, widths[..column_count].iter().copied())
         .header(
-            Row::new(["HOST", "STATE", "CPU", "RAM", "DISK", "LOAD", "SSH"])
+            Row::new(headers[..column_count].iter().copied())
                 .style(Style::default().add_modifier(Modifier::BOLD)),
         )
         .block(block("HOST-WATCH", app.focus == 0))
@@ -354,18 +390,12 @@ pub fn render(f: &mut Frame, app: &mut App, c: &Config, now: i64) {
     } else {
         Some(app.selected)
     });
-    f.render_stateful_widget(table, rows[0], &mut app.table);
-    if area.width >= 110 && area.height >= 24 {
-        let panels = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
-            .split(rows[1]);
-        details(f, app, c, now, panels[0]);
-        graphs(f, app, c, panels[1]);
-    } else if app.focus == 1 {
-        details(f, app, c, now, rows[1]);
-    } else {
-        graphs(f, app, c, rows[1]);
+    f.render_stateful_widget(table, table_area, &mut app.table);
+    if let Some(rect) = details_area {
+        details(f, app, c, now, rect);
+    }
+    if let Some(rect) = graphs_area {
+        graphs(f, app, c, rect);
     }
     let footer = if let Some(err) = &app.state_error {
         format!("{err} | q: quit")
@@ -771,6 +801,41 @@ mod tests {
             (6, None),
         ] {
             assert_eq!(warning_threshold(&c, index), expected);
+        }
+    }
+    #[test]
+    fn large_screen_places_full_height_hosts_left_of_details_and_graphs() {
+        let c = config();
+        for (width, height) in [(150, 30), (180, 50), (240, 60)] {
+            let mut app = App::default();
+            for i in 0..20 {
+                let name = format!("host-{i:02}");
+                app.names.push(name.clone());
+                app.state.hosts.insert(name, HostState::default());
+            }
+            app.selected = 19;
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|f| render(f, &mut app, &c, 1000)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let split = (width / 3).clamp(46, 76);
+            let text = |start: u16, end: u16| {
+                (0..height - 2)
+                    .flat_map(|y| (start..end).map(move |x| (x, y)))
+                    .map(|pos| buffer.cell(pos).unwrap().symbol())
+                    .collect::<String>()
+            };
+            let left = text(0, split);
+            let right = text(split, width);
+            assert!(left.contains("HOST-WATCH"));
+            assert!(!left.contains("DETAILS"));
+            assert!(right.contains("DETAILS"));
+            assert_eq!(buffer.cell((0, height - 3)).unwrap().symbol(), "└");
+            assert!(
+                left.contains("host-19"),
+                "selected host must scroll into view"
+            );
+            assert!(right.contains("No samples yet / unknown"));
+            assert!(!right.contains("HOST-WATCH"));
         }
     }
     #[test]
