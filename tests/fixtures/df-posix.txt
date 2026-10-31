@@ -1,0 +1,2 @@
+Filesystem           1024-blocks      Used Available Capacity Mounted on
+/dev/root               1000000    390000    610000 39% /

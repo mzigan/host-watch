@@ -437,7 +437,7 @@ fn details(f: &mut Frame, app: &App, c: &Config, now: i64, area: Rect) {
             format!("Uptime: {}", uptime(m.uptime_seconds)),
             format!("CPU cores: {}", optional(m.cpu_count)),
             format!("Processes: {}", optional(m.processes)),
-            format!("Failed units: {}", optional(m.failed_units)),
+            format!("Failed units: {}", m.failed_units_display()),
             format!(
                 "CPU: {} RAM: {}",
                 value(m.cpu_percent, "%"),
@@ -603,9 +603,9 @@ fn graph(f: &mut Frame, app: &App, index: usize, area: Rect, focus: bool, warnin
         (max / scale * 1.15).max(1.)
     };
     let color = match index {
-        0 => Color::Green,
-        1 => Color::Magenta,
-        2 => Color::Yellow,
+        0 => Color::Red,
+        1 => Color::Rgb(255, 0, 255),
+        2 => Color::Rgb(255, 165, 0),
         3 => Color::Cyan,
         4 => Color::Blue,
         5 => Color::Green,
@@ -837,6 +837,32 @@ mod tests {
             assert!(right.contains("No samples yet / unknown"));
             assert!(!right.contains("HOST-WATCH"));
         }
+    }
+    #[test]
+    fn details_show_unsupported_systemd_metric() {
+        let c = config();
+        let mut app = App::default();
+        app.names.push("fixture".into());
+        app.state.hosts.insert(
+            "fixture".into(),
+            HostState {
+                metrics: Some(crate::metrics::Metrics {
+                    systemd_supported: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| render(f, &mut app, &c, 1000)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(text.contains("Failed units: unsupported"));
     }
     #[test]
     fn stale_detection_and_table() {

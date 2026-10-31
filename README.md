@@ -4,7 +4,7 @@
 
 ## Сборка и запуск
 
-Требуются Rust с поддержкой edition 2024, C compiler (bundled SQLite), Linux и `/usr/bin/ssh`. На удалённых хостах используются `/proc`, POSIX shell, awk, GNU df; systemctl опционален. Ничего устанавливать на серверы не требуется.
+Требуются Rust с поддержкой edition 2024, C compiler (bundled SQLite), Linux и `/usr/bin/ssh`. На удалённых хостах используются `/proc`, POSIX shell, awk, df с POSIX-флагами `-Pk`; systemctl опционален. Ничего устанавливать на серверы не требуется.
 
 ```sh
 cargo build --release
@@ -55,11 +55,11 @@ OpenSSH читает конфигурацию пользователя, вклю
 
 ## Метрики и health
 
-Один shell-блок за один SSH-сеанс: CPU count/usage, load 1/5/15, RAM, swap, локальные диски, uptime, процессы, failed systemd units, hostname, kernel, суммарные RX/TX всех non-loopback interfaces и optional CPU temperature. Файловые системы выбираются явным списком локальных типов; виртуальные и сетевые исключены. Root на overlay тоже исключается. Mount paths с пробелами поддерживаются, с переводами строк/табуляцией — нет.
+Один shell-блок за один SSH-сеанс: CPU count/usage, load 1/5/15, RAM, swap, локальные диски, uptime, процессы, failed systemd units, hostname, kernel, суммарные RX/TX всех non-loopback interfaces и optional CPU temperature. Файловые системы выбираются явным списком локальных типов; виртуальные и сетевые исключены. Root на overlay тоже исключается. Типы mounts фильтруются по `/proc/mounts`, затем используется `df -Pk mountpoint` без GNU `-l`/`-t`; для embedded Linux включены также ubifs/jffs2. Число процессов берётся по каталогам `/proc/[0-9]*`, без зависимости от ps. Mount paths с пробелами поддерживаются, с переводами строк/табуляцией — нет.
 
 Первый CPU snapshot — Unknown. CPU выше порога непрерывно пять минут даёт WARNING; ошибка опроса или длительный разрыв сбрасывает выдержку. RAM >90%, диск >85%, load на CPU >1.5 или failed units дают WARNING; RAM >98% или диск >95% — CRITICAL (пороги настраиваются). CPU temperature >80°C даёт WARNING, >90°C — CRITICAL. Неизвестная температура не влияет на health. Пороги сравниваются строго `>`.
 
-Одна/две ошибки SSH/collector — UNKNOWN, три подряд — CRITICAL. Успех обнуляет ошибки и пересчитывает health. Недостаток данных не считается нулём. Если нет важных метрик (например systemd недоступен), состояние UNKNOWN, кроме уже обнаруженных WARNING/CRITICAL. `status` обнаруживает просроченный state, если daemon остановлен. Времена в verbose/state — Unix seconds UTC.
+Одна/две ошибки SSH/collector — UNKNOWN, три подряд — CRITICAL. Успех обнуляет ошибки и пересчитывает health. Недостаток данных не считается нулём. Если нет важных метрик, состояние UNKNOWN, кроме уже обнаруженных WARNING/CRITICAL. Отсутствие `systemctl` явно отмечается как `systemd_supported=false`, `failed_units=null` и не ухудшает health; verbose/TUI показывают `Failed units: unsupported`. Если systemctl установлен, но его вызов завершился ошибкой, значение неизвестно (`n/a`), а не равно нулю. Другие init-системы не опрашиваются. `status` обнаруживает просроченный state, если daemon остановлен. Времена в verbose/state — Unix seconds UTC.
 
 Пример summary после двух успешных опросов:
 
@@ -248,3 +248,14 @@ cargo build --release
 Автоматические тесты используют fixtures, временные SQLite/state, TestBackend Ratatui, локальный collector и SSH с `ProxyCommand=false`, без подключения к серверам. Проверены старый config/state/DB, миграция, network delta/reset/reboot, temperature, диапазоны, downsampling и fallback при недоступных данных.
 
 Позже: ограниченная проверка kernel/journal, уведомления. Нет агентов, web UI, generic rule engine или внешней monitoring platform.
+
+
+## Обновление:
+
+```sh
+cargo build --release
+sudo systemctl stop host-watch
+sudo install -m 0755 target/release/host-watch /usr/local/bin/host-watch
+sudo systemctl start host-watch
+systemctl status host-watch --no-pager
+```
