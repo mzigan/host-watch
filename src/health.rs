@@ -109,11 +109,11 @@ pub fn evaluate(s: &mut HostState, t: &Thresholds, now: i64, interval: u64) {
             || m.memory_percent.is_none()
             || m.disks.is_empty()
             || m.load1.is_none()
-            || m.failed_units.is_none())
+            || (m.failed_units.is_none() && m.systemd_supported != Some(false)))
     {
         s.health = Health::Unknown;
         s.reasons.push(
-            "insufficient metrics (CPU needs two successful snapshots; systemd may be unavailable)"
+            "insufficient metrics (CPU needs two successful snapshots; available collectors may have failed)"
                 .into(),
         );
     }

@@ -351,6 +351,7 @@ fn old_config_and_state_remain_compatible() {
         "rx_bytes_per_sec",
         "tx_bytes_per_sec",
         "cpu_temperature_c",
+        "systemd_supported",
     ] {
         json.as_object_mut().unwrap().remove(field);
     }
@@ -471,4 +472,113 @@ fn downsampling_averages_max_disk_and_gaps() {
     // Two samples in one bucket, one in another: averaging bucket means is wrong.
     assert_eq!(crate::storage::Bucket::average(&buckets, 0), Some(40.));
     assert!(crate::storage::Bucket::average(&[], 0).is_none());
+}
+
+/// A minimal remote PATH: systemctl really is absent in the non-systemd case.
+/// df rejects GNU-only arguments and returns a BusyBox/POSIX-shaped fixture.
+fn collector_with_systemctl(systemctl: Option<&str>) -> Metrics {
+    use std::os::unix::{fs::PermissionsExt, fs::symlink};
+    let tmp = tempfile::tempdir().unwrap();
+    for tool in ["awk", "hostname", "uname"] {
+        symlink(format!("/usr/bin/{tool}"), tmp.path().join(tool)).unwrap();
+    }
+    let df = tmp.path().join("df");
+    std::fs::write(
+        &df,
+        format!(
+            "#!/bin/sh\n[ \"$#\" -eq 2 ] && [ \"$1\" = -Pk ] || exit 2\nprintf '%s\\n' '{}'\n",
+            include_str!("../tests/fixtures/df-posix.txt").trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(df, std::fs::Permissions::from_mode(0o755)).unwrap();
+    if let Some(body) = systemctl {
+        let path = tmp.path().join("systemctl");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mounts = tmp.path().join("mounts");
+    std::fs::write(&mounts,"/dev/root / ext4 rw 0 0\nnone /proc proc rw 0 0\nnone /run tmpfs rw 0 0\nserver:/share /net nfs rw 0 0\n").unwrap();
+    let script = include_str!("collector.sh").replace(
+        "done < /proc/mounts",
+        &format!("done < {}", mounts.display()),
+    );
+    let output = std::process::Command::new("/bin/sh")
+        .args(["-c", &script])
+        .env("PATH", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let m = crate::metrics::parse(std::str::from_utf8(&output.stdout).unwrap()).unwrap();
+    assert_eq!(m.disks.len(), 1, "only local mounts should reach df");
+    assert_eq!(m.disks[0].used_percent, 39.);
+    assert!(m.processes.is_some());
+    m
+}
+#[test]
+fn no_systemctl_is_unsupported_and_does_not_degrade_health() {
+    let mut m = collector_with_systemctl(None);
+    assert_eq!(m.systemd_supported, Some(false));
+    assert_eq!(m.failed_units, None);
+    assert_eq!(m.failed_units_display(), "unsupported");
+    m.cpu_percent = Some(10.);
+    m.load1 = Some(0.);
+    m.memory_percent = Some(20.);
+    let mut h = HostState {
+        metrics: Some(m),
+        ..host()
+    };
+    eval(&mut h, 1000);
+    assert_eq!(h.health, Health::Ok);
+    assert!(h.reasons.is_empty());
+}
+#[test]
+fn systemd_failed_units_still_warn_and_zero_is_healthy() {
+    for (body, count, expected) in [
+        ("exit 0", 0, Health::Ok),
+        (
+            "printf 'broken.service loaded failed failed Broken unit\\n'",
+            1,
+            Health::Warning,
+        ),
+    ] {
+        let mut m = collector_with_systemctl(Some(body));
+        assert_eq!(m.systemd_supported, Some(true));
+        assert_eq!(m.failed_units, Some(count));
+        assert_eq!(m.failed_units_display(), count.to_string());
+        m.cpu_percent = Some(10.);
+        m.load1 = Some(0.);
+        m.memory_percent = Some(20.);
+        let mut h = HostState {
+            metrics: Some(m),
+            ..host()
+        };
+        eval(&mut h, 1000);
+        assert_eq!(h.health, expected);
+    }
+}
+#[test]
+fn failing_systemctl_is_unknown_not_zero_or_a_failed_unit() {
+    let mut m = collector_with_systemctl(Some("printf 'systemctl error\\n' >&2; exit 1"));
+    assert_eq!(m.failed_units, None);
+    assert_eq!(m.systemd_supported, Some(true));
+    assert_eq!(m.failed_units_display(), "n/a");
+    m.cpu_percent = Some(10.);
+    m.load1 = Some(0.);
+    m.memory_percent = Some(20.);
+    let mut h = HostState {
+        metrics: Some(m),
+        ..host()
+    };
+    eval(&mut h, 1000);
+    assert_eq!(h.health, Health::Unknown);
 }

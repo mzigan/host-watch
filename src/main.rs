@@ -149,6 +149,7 @@ fn display(c: &Config, verbose: bool) -> Result<()> {
                 );
                 println!("  SSH collection round trip: {:?} ms", h.latency_ms);
                 if let Some(m) = &h.metrics {
+                    println!("  Failed units: {}", m.failed_units_display());
                     println!("{}", serde_json::to_string_pretty(m)?);
                 }
             }

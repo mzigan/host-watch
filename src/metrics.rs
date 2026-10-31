@@ -19,6 +19,7 @@ pub struct Metrics {
     pub swap_free_kb: Option<u64>,
     pub processes: Option<u64>,
     pub failed_units: Option<u64>,
+    pub systemd_supported: Option<bool>,
     pub disks: Vec<Disk>,
     pub rx_bytes: Option<u64>,
     pub tx_bytes: Option<u64>,
@@ -58,6 +59,13 @@ pub fn parse(output: &str) -> Result<Metrics> {
             "swap_free_kb" => m.swap_free_kb = Some(v.parse()?),
             "processes" => m.processes = Some(v.parse()?),
             "failed_units" => m.failed_units = Some(v.parse()?),
+            "systemd_supported" => {
+                m.systemd_supported = Some(match v {
+                    "0" => false,
+                    "1" => true,
+                    _ => bail!("invalid systemd support marker"),
+                })
+            }
             "collector_complete" => complete = v == "1",
             "net" => {
                 net.push_str(v);
@@ -105,6 +113,18 @@ pub fn parse(output: &str) -> Result<Metrics> {
     Ok(m)
 }
 impl Metrics {
+    pub fn failed_units_display(&self) -> String {
+        self.failed_units.map_or_else(
+            || {
+                if self.systemd_supported == Some(false) {
+                    "unsupported".into()
+                } else {
+                    "n/a".into()
+                }
+            },
+            |n| n.to_string(),
+        )
+    }
     pub fn derive_cpu(&mut self, previous: Option<&Self>) {
         if let Some(p) = previous {
             if matches!((self.uptime_seconds,p.uptime_seconds),(Some(a),Some(b)) if a<=b) {
