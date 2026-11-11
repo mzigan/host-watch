@@ -476,7 +476,7 @@ fn downsampling_averages_max_disk_and_gaps() {
 
 /// A minimal remote PATH: systemctl really is absent in the non-systemd case.
 /// df rejects GNU-only arguments and returns a BusyBox/POSIX-shaped fixture.
-fn collector_with_systemctl(systemctl: Option<&str>) -> Metrics {
+fn collector_fixture(systemctl: Option<&str>, mounts_input: &str, df_output: &str) -> Metrics {
     use std::os::unix::{fs::PermissionsExt, fs::symlink};
     let tmp = tempfile::tempdir().unwrap();
     for tool in ["awk", "hostname", "uname"] {
@@ -487,7 +487,7 @@ fn collector_with_systemctl(systemctl: Option<&str>) -> Metrics {
         &df,
         format!(
             "#!/bin/sh\n[ \"$#\" -eq 2 ] && [ \"$1\" = -Pk ] || exit 2\nprintf '%s\\n' '{}'\n",
-            include_str!("../tests/fixtures/df-posix.txt").trim()
+            df_output.trim()
         ),
     )
     .unwrap();
@@ -498,7 +498,7 @@ fn collector_with_systemctl(systemctl: Option<&str>) -> Metrics {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let mounts = tmp.path().join("mounts");
-    std::fs::write(&mounts,"/dev/root / ext4 rw 0 0\nnone /proc proc rw 0 0\nnone /run tmpfs rw 0 0\nserver:/share /net nfs rw 0 0\n").unwrap();
+    std::fs::write(&mounts, mounts_input).unwrap();
     let script = include_str!("collector.sh").replace(
         "done < /proc/mounts",
         &format!("done < {}", mounts.display()),
@@ -518,8 +518,15 @@ fn collector_with_systemctl(systemctl: Option<&str>) -> Metrics {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let m = crate::metrics::parse(std::str::from_utf8(&output.stdout).unwrap()).unwrap();
-    assert_eq!(m.disks.len(), 1, "only local mounts should reach df");
+    crate::metrics::parse(std::str::from_utf8(&output.stdout).unwrap()).unwrap()
+}
+fn collector_with_systemctl(systemctl: Option<&str>) -> Metrics {
+    let m = collector_fixture(
+        systemctl,
+        "/dev/root / ext4 rw 0 0\nnone /proc proc rw 0 0\nnone /run tmpfs rw 0 0\nserver:/share /net nfs rw 0 0\n",
+        include_str!("../tests/fixtures/df-posix.txt"),
+    );
+    assert_eq!(m.disks.len(), 1, "only root/local mounts should reach df");
     assert_eq!(m.disks[0].used_percent, 39.);
     assert!(m.processes.is_some());
     m
@@ -581,4 +588,28 @@ fn failing_systemctl_is_unknown_not_zero_or_a_failed_unit() {
     };
     eval(&mut h, 1000);
     assert_eq!(h.health, Health::Unknown);
+}
+
+#[test]
+fn overlay_root_is_monitored_using_df() {
+    let m = collector_fixture(
+        None,
+        "overlay / overlay rw,lowerdir=/root,upperdir=/data/root,workdir=/data/work 0 0\n",
+        include_str!("../tests/fixtures/df-overlay-root.txt"),
+    );
+    assert_eq!(m.disks.len(), 1);
+    assert_eq!(m.disks[0].mount, "/");
+    assert_eq!(m.disks[0].used_percent, 8.);
+    assert_eq!(m.disks[0].total_kb, 25165824);
+    assert_eq!(m.disks[0].available_kb, 22020096);
+    assert_eq!(m.max_disk_used_percent(), Some(8.));
+}
+#[test]
+fn non_root_overlay_and_virtual_filesystems_remain_excluded() {
+    let m = collector_fixture(
+        None,
+        "overlay /some/container/path overlay rw 0 0\nnone /run tmpfs rw 0 0\nnone /dev devtmpfs rw 0 0\nnone /proc proc rw 0 0\nnone /sys sysfs rw 0 0\nnone /sys/fs/cgroup cgroup2 rw 0 0\n/dev/loop0 /snap/app squashfs ro 0 0\n",
+        include_str!("../tests/fixtures/df-overlay-root.txt"),
+    );
+    assert!(m.disks.is_empty(), "excluded mounts must not invoke df");
 }
